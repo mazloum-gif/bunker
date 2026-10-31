@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Бункер</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#12100e; --panel:#1c1916; --panel2:#262119; --line:#3a322a;
+    --text:#f3ece1; --muted:#a4968a; --accent:#e0a34a; --danger:#c9564b; --ok:#7fa35a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding-bottom:24px}
+  header{padding:16px 16px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  h1{margin:0 0 8px;font-size:19px}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{padding:4px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px;color:var(--muted)}
+  .pill b{color:var(--text)}
+  .timer{font-variant-numeric:tabular-nums;color:var(--accent)}
+  main{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:15px;color:var(--accent);letter-spacing:.02em}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line)}
+  .row:last-child{border-bottom:0}
+  .name{font-weight:600}
+  .dead{opacity:.45;text-decoration:line-through}
+  .items{color:var(--muted);font-size:13px}
+  button{font:inherit;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 12px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#20180d;border-color:var(--accent);font-weight:700}
+  button:disabled{opacity:.45;cursor:default}
+  .grid{display:flex;flex-wrap:wrap;gap:8px}
+  .log{max-height:230px;overflow:auto;font-size:14px}
+  .log div{padding:4px 0;border-bottom:1px solid var(--line);color:var(--muted)}
+  .log div:last-child{border:0}
+  .cat{border-left:3px solid var(--danger);padding-left:10px;color:var(--text)}
+  .muted{color:var(--muted)}
+  .row-msg{display:flex;gap:8px}
+  .row-msg input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:9px 12px;font:inherit}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Бункер</h1>
+  <div class="bar">
+    <span class="pill">Фаза: <b id="phase">—</b></span>
+    <span class="pill">Раунд <b id="round">1</b></span>
+    <span class="pill">В бункере <b id="alive">0</b>/<b id="size">2</b></span>
+    <span class="pill timer" id="timer">—</span>
+  </div>
+</header>
+<main>
+  <div class="card" id="joinCard">
+    <h2>Войти в бункер</h2>
+    <div class="row-msg">
+      <input id="chatInput" placeholder="ID чата (числом)" inputmode="numeric">
+      <button class="primary" id="joinBtn">Войти</button>
+    </div>
+    <p class="muted" id="joinHint" style="margin:8px 0 0;font-size:13px">
+      ID чата можно узнать, отправив боту /new в группе.
+    </p>
+  </div>
+
+  <div class="card" id="catCard" style="display:none">
+    <h2>Катастрофа</h2>
+    <div class="cat" id="catText"></div>
+  </div>
+
+  <div class="card" id="playersCard">
+    <h2>Игроки</h2>
+    <div id="players"></div>
+  </div>
+
+  <div class="card" id="actionCard">
+    <h2 id="actionTitle">Действие</h2>
+    <div id="actionBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>Чат бункера</h2>
+    <div class="log" id="log"></div>
+    <div class="row-msg" style="margin-top:10px">
+      <input id="msgInput" placeholder="Сказать в бункер…">
+      <button id="sendBtn">→</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+
+const initData = tg ? tg.initData : '';
+const chatId = new URLSearchParams(location.search).get('chat') || localStorage.getItem('chatId') || '';
+if (chatId) document.getElementById('chatInput').value = chatId;
+
+let state = null;
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+  return res.json();
+}
+
+document.getElementById('joinBtn').onclick = async () => {
+  const chat = document.getElementById('chatInput').value.trim();
+  if (!chat) return;
+  try {
+    localStorage.setItem('chatId', chat);
+    state = await api('/api/game/join', { chatId: chat, name: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.first_name : undefined });
+    render();
+  } catch (e) {
+    document.getElementById('joinHint').textContent = 'Не удалось войти: ' + e.message;
+  }
+};
+
+document.getElementById('sendBtn').onclick = async () => {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text || !state) return;
+  input.value = '';
+  await action('say', text);
+};
+
+async function action(name, value) {
+  if (!state) return;
+  state = await api(`/api/game/${state.id}/action`, { action: name, value });
+  render();
+}
+
+function render() {
+  if (!state) return;
+  document.getElementById('joinCard').style.display = 'none';
+  document.getElementById('title').textContent = state.title;
+  document.getElementById('phase').textContent = state.phaseLabel;
+  document.getElementById('round').textContent = state.round;
+  document.getElementById('size').textContent = state.bunkerSize;
+  document.getElementById('alive').textContent = state.players.filter(p => p.alive).length;
+  document.getElementById('timer').textContent = state.phaseEndsAt ? fmt(state.phaseEndsAt - Date.now()) : '—';
+
+  const catCard = document.getElementById('catCard');
+  catCard.style.display = state.catastrophe ? '' : 'none';
+  document.getElementById('catText').textContent = state.catastrophe || '';
+
+  const players = document.getElementById('players');
+  players.innerHTML = '';
+  state.players.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const votes = state.votes[p.id] || 0;
+    row.innerHTML = `<span class="name ${p.alive ? '' : 'dead'}">${p.name}${p.isYou ? ' (вы)' : ''}</span>` +
+      `<span class="items">${votes ? '★'.repeat(votes) + ' ' : ''}${(p.items || []).join(', ')}</span>`;
+    players.appendChild(row);
+  });
+
+  // блок действия
+  const body = document.getElementById('actionBody');
+  body.innerHTML = '';
+  const title = document.getElementById('actionTitle');
+  const me = state.players.find(p => p.isYou);
+
+  if (state.phase === 'vote' && me && me.alive) {
+    title.textContent = 'Кто покинет бункер?';
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    state.players.filter(p => p.alive && !p.isYou).forEach(p => {
+      const b = document.createElement('button');
+      b.textContent = p.name;
+      b.onclick = () => action('vote', p.id);
+      grid.appendChild(b);
+    });
+    body.appendChild(grid);
+  } else if (state.phase === 'items' && me && me.alive) {
+    title.textContent = 'Выбери вещь';
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    state.itemsPool.forEach(it => {
+      const b = document.createElement('button');
+      b.textContent = it;
+      if (me.chosenItem === it) b.classList.add('primary');
+      b.onclick = () => action('item', it);
+      grid.appendChild(b);
+    });
+    body.appendChild(grid);
+  } else if (state.phase === 'result') {
+    title.textContent = 'Игра окончена';
+    body.innerHTML = '<div class="muted">Победители: ' +
+      state.players.filter(p => p.alive).map(p => p.name).join(', ') + '</div>';
+  } else {
+    title.textContent = 'Обсуждение';
+    body.innerHTML = '<div class="muted">Договаривайтесь в чате бункера. Фаза сменится автоматически.</div>';
+  }
+
+  const nb = document.createElement('button');
+  nb.textContent = '⏭ Следующая фаза';
+  nb.style.marginTop = '10px';
+  nb.onclick = () => action('next');
+  body.appendChild(nb);
+
+  const log = document.getElementById('log');
+  log.innerHTML = '';
+  state.log.forEach(l => {
+    const d = document.createElement('div');
+    d.textContent = l.text;
+    log.appendChild(d);
+  });
+}
+
+function fmt(ms) {
+  if (ms <= 0) return '0:00';
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+async function poll() {
+  if (!state) return;
+  try {
+    state = await api('/api/game/' + state.id);
+    render();
+  } catch (e) {}
+}
+setInterval(poll, 3000);
+if (chatId) document.getElementById('joinBtn').click();
+</script>
+</body>
+</html>
