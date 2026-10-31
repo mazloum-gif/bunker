@@ -1,0 +1,36 @@
+name: Sync files
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download project files
+        run: |
+          set -e
+          mkdir -p public
+          curl -sSfL https://bunker-src-files.spru.site/server.js -o server.js
+          curl -sSfL https://bunker-src-files.spru.site/package.json -o package.json
+          curl -sSfL https://bunker-src-files.spru.site/README.md -o README.md
+          curl -sSfL https://bunker-src-files.spru.site/Dockerfile.txt -o Dockerfile
+          curl -sSfL https://bunker-src-files.spru.site/render.yaml.txt -o render.yaml
+          curl -sSfL https://bunker-src-files.spru.site/gitignore.txt -o .gitignore
+          curl -sSfL https://bunker-src-files.spru.site/index.txt -o public/index.html
+
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --staged --quiet || git commit -m 'Add bunker project files'
+          git push origin HEAD:main
